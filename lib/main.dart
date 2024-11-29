@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -47,49 +48,137 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const HomePage(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
-  void scheduleNotification() async {
-    print("Scheduling notification...");
-    try {
-      const DarwinNotificationDetails iosNotificationDetails =
-          DarwinNotificationDetails(
-              presentAlert: true, presentSound: true, presentBadge: true);
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
 
-      const NotificationDetails notificationDetails = NotificationDetails(
-        iOS: iosNotificationDetails,
-      );
+class _HomePageState extends State<HomePage> {
+  bool _isRunning = false;
+  bool _isScreenOn = true;
+  int _currentNotificationIndex = 0;
 
-      await flutterLocalNotificationsPlugin.zonedSchedule(
-        0,
-        'Scheduled Notification',
-        'This is a test notification!',
-        tz.TZDateTime.now(tz.local).add(const Duration(seconds: 5)),
-        notificationDetails,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-        androidScheduleMode: AndroidScheduleMode.exact,
-        payload: 'Test Payload',
-      );
-      print("Notification scheduled successfully.");
-    } catch (e) {
-      print("Error scheduling notification: $e");
+  final List<Map<String, dynamic>> _notificationSchedule = [
+    {
+      'id': 0,
+      'interval': const Duration(minutes: 10),
+      'title': '10-Minute Timer',
+      'body': '10 minutes have passed!',
+    },
+    {
+      'id': 1,
+      'interval': const Duration(minutes: 20),
+      'title': '20-Minute Timer',
+      'body': '20 minutes have passed!',
+    },
+    {
+      'id': 2,
+      'interval': const Duration(minutes: 20, seconds: 20),
+      'title': '20:20 Timer',
+      'body': '20 minutes and 20 seconds have passed!',
+    },
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _monitorScreenState();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  void _monitorScreenState() async {
+    while (true) {
+      final brightness = await ScreenBrightness().application;
+      if (brightness == 0.0 && _isScreenOn) {
+        print("Screen OFF: Cancel notifications");
+        _isScreenOn = false;
+        _stopNotifications();
+      } else if (brightness > 0.0 && !_isScreenOn) {
+        print("Screen ON: Reschedule notifications");
+        _isScreenOn = true;
+        _startNotifications();
+      }
+      await Future.delayed(const Duration(seconds: 1));
     }
+  }
+
+  void _startNotifications() {
+    if (_isRunning) return;
+    _isRunning = true;
+    _currentNotificationIndex = 0; // 最初の通知から開始
+    _scheduleNextNotification();
+  }
+
+  Future<void> _scheduleNextNotification() async {
+    if (!_isRunning) return;
+
+    final currentNotification =
+        _notificationSchedule[_currentNotificationIndex];
+    final nextTriggerTime =
+        tz.TZDateTime.now(tz.local).add(currentNotification['interval']);
+
+    const DarwinNotificationDetails iosNotificationDetails =
+        DarwinNotificationDetails(
+            presentAlert: true, presentSound: true, presentBadge: true);
+
+    const NotificationDetails notificationDetails = NotificationDetails(
+      iOS: iosNotificationDetails,
+    );
+
+    await flutterLocalNotificationsPlugin.zonedSchedule(
+      currentNotification['id'],
+      currentNotification['title'],
+      currentNotification['body'],
+      nextTriggerTime,
+      notificationDetails,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      androidScheduleMode: AndroidScheduleMode.exact,
+    );
+
+    Future.delayed(currentNotification['interval'], () {
+      if (_isRunning) {
+        _currentNotificationIndex =
+            (_currentNotificationIndex + 1) % _notificationSchedule.length;
+        _scheduleNextNotification();
+      }
+    });
+  }
+
+  void _stopNotifications() async {
+    _isRunning = false;
+    await flutterLocalNotificationsPlugin.cancelAll();
+    print("All notifications cancelled");
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Notifications Example')),
+      appBar: AppBar(title: const Text('Screen-Dependent Notifications')),
       body: Center(
-        child: ElevatedButton(
-          onPressed: scheduleNotification,
-          child: const Text('Schedule Notification'),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ElevatedButton(
+              onPressed: _startNotifications,
+              child: const Text('Start Notifications'),
+            ),
+            ElevatedButton(
+              onPressed: _stopNotifications,
+              child: const Text('Stop Notifications'),
+            ),
+          ],
         ),
       ),
     );
